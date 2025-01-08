@@ -8,12 +8,13 @@ const Chat = () => {
     const [remoteParticipants, setRemoteParticipants] = useState([]);
 
     const roomName = 'my-room';
+    const identity = `user-${Math.random().toString(36).substr(2, 9)}`;
     const baseUrl = "https://chat-room-4id1.onrender.com"
     // const baseUrl = "http://localhost:4000"
 
     const fetchToken = async () => {
         try {
-            const response = await fetch(`${baseUrl}/api/v1/room?identity=user123&room=${roomName}`);
+            const response = await fetch(`${baseUrl}/api/v1/room?${identity}&room=${roomName}`);
             console.log(response)
             const data = await response.json();
             setToken(data.token); // Correct token assignment
