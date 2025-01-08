@@ -6,14 +6,15 @@ const Chat = () => {
     const [token, setToken] = useState(null);
     const [localTracks, setLocalTracks] = useState([]);
     const [remoteParticipants, setRemoteParticipants] = useState([]);
+    const [isConnected, setIsConnected] = useState(false);
 
     const roomName = 'my-room';
     const identity = `user-${Math.random().toString(36).substr(2, 9)}`;
     const baseUrl = "https://chat-room-4id1.onrender.com";
-    // const baseUrl = "http://localhost:4000";
 
     const fetchToken = async () => {
         try {
+            if (token) return; // Prevent multiple token requests
             const response = await fetch(`${baseUrl}/api/v1/room?identity=${identity}&room=${roomName}`);
             const data = await response.json();
             setToken(data.token);
@@ -23,29 +24,36 @@ const Chat = () => {
     };
 
     useEffect(() => {
-        if (token) {
-            console.log("Connecting to Twilio...");
+        if (token && !isConnected) {
             const joinRoom = async () => {
                 try {
+                    const localVideoTrack = await Video.createLocalVideoTrack();
+                    const localAudioTrack = await Video.createLocalAudioTrack();
+                    setLocalTracks([localVideoTrack, localAudioTrack]);
+
                     const connectedRoom = await Video.connect(token, {
                         name: roomName,
-                        tracks: localTracks,
-                        video: true,
-                        audio: true,
+                        tracks: [localVideoTrack, localAudioTrack],
                     });
 
                     setRoom(connectedRoom);
-
-                    // Handle local participant's tracks
-                    setLocalTracks([...connectedRoom.localParticipant.tracks.values()]);
+                    setIsConnected(true);
 
                     // Handle remote participants
-                    connectedRoom.participants.forEach(participant => {
-                        handleParticipantConnected(participant);
-                    });
-
+                    connectedRoom.participants.forEach(handleParticipantConnected);
                     connectedRoom.on('participantConnected', handleParticipantConnected);
                     connectedRoom.on('participantDisconnected', handleParticipantDisconnected);
+
+                    // Cleanup on disconnect
+                    connectedRoom.once('disconnected', (room) => {
+                        room.localParticipant.tracks.forEach((publication) => {
+                            publication.track.stop();
+                        });
+                        setRoom(null);
+                        setLocalTracks([]);
+                        setRemoteParticipants([]);
+                        setIsConnected(false);
+                    });
                 } catch (error) {
                     console.error('Error connecting to room:', error);
                 }
@@ -57,53 +65,47 @@ const Chat = () => {
 
     const handleParticipantConnected = (participant) => {
         console.log(`Participant connected: ${participant.identity}`);
-        participant.tracks.forEach(publication => {
+        participant.tracks.forEach((publication) => {
             if (publication.isSubscribed) {
-                handleTrackSubscribed(participant, publication.track);
+                handleTrackSubscribed(publication.track);
             }
         });
-        participant.on('trackSubscribed', (track) => handleTrackSubscribed(participant, track));
+        participant.on('trackSubscribed', handleTrackSubscribed);
         participant.on('trackUnsubscribed', handleTrackUnsubscribed);
     };
 
     const handleParticipantDisconnected = (participant) => {
         console.log(`Participant disconnected: ${participant.identity}`);
-        setRemoteParticipants(prevParticipants =>
-            prevParticipants.filter(p => p.participant !== participant)
+        setRemoteParticipants((prevParticipants) =>
+            prevParticipants.filter((p) => p.participant !== participant)
         );
     };
 
-    const handleTrackSubscribed = (participant, track) => {
-        if (track.kind === 'video' || track.kind === 'audio') {
-            setRemoteParticipants(prevParticipants => [
-                ...prevParticipants,
-                { participant, track }
-            ]);
-        }
+    const handleTrackSubscribed = (track) => {
+        setRemoteParticipants((prevParticipants) => [
+            ...prevParticipants,
+            { track },
+        ]);
     };
 
     const handleTrackUnsubscribed = (track) => {
-        setRemoteParticipants(prevParticipants =>
-            prevParticipants.filter(p => p.track !== track)
+        setRemoteParticipants((prevParticipants) =>
+            prevParticipants.filter((p) => p.track !== track)
         );
     };
 
     const handleLeaveRoom = () => {
         if (room) {
-            room.localParticipant.tracks.forEach((publication) => {
-                publication.track.stop();
-            });
             room.disconnect();
-            setRoom(null);
-            setRemoteParticipants([]);
-            setLocalTracks([]);
         }
     };
 
     return (
         <div>
             <h1>Twilio Video Call</h1>
-            <button onClick={fetchToken}>Start Video Call</button>
+            <button onClick={fetchToken} disabled={isConnected}>
+                Start Video Call
+            </button>
 
             <div id="local-video-container">
                 {localTracks.map((track, index) =>
@@ -125,7 +127,7 @@ const Chat = () => {
             </div>
 
             <div id="remote-video-container">
-                {remoteParticipants.map(({ participant, track }, index) =>
+                {remoteParticipants.map(({ track }, index) =>
                     track.kind === 'video' ? (
                         <video
                             key={index}
@@ -152,7 +154,9 @@ const Chat = () => {
                 )}
             </div>
 
-            <button onClick={handleLeaveRoom}>Leave Room</button>
+            <button onClick={handleLeaveRoom} disabled={!isConnected}>
+                Leave Room
+            </button>
         </div>
     );
 };
