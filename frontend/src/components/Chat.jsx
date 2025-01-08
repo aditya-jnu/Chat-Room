@@ -4,68 +4,48 @@ import Video from 'twilio-video';
 const Chat = () => {
     const [room, setRoom] = useState(null);
     const [token, setToken] = useState(null);
-    const [localTrack, setLocalTrack] = useState(null);
+    const [localTracks, setLocalTracks] = useState([]);
     const [remoteParticipants, setRemoteParticipants] = useState([]);
 
     const roomName = 'my-room';
     const identity = `user-${Math.random().toString(36).substr(2, 9)}`;
-    const baseUrl = "https://chat-room-4id1.onrender.com"
-    // const baseUrl = "http://localhost:4000"
+    const baseUrl = "https://chat-room-4id1.onrender.com";
+    // const baseUrl = "http://localhost:4000";
 
     const fetchToken = async () => {
         try {
-            const response = await fetch(`${baseUrl}/api/v1/room?${identity}&room=${roomName}`);
-            console.log(response)
+            const response = await fetch(`${baseUrl}/api/v1/room?identity=${identity}&room=${roomName}`);
             const data = await response.json();
-            setToken(data.token); // Correct token assignment
+            setToken(data.token);
         } catch (error) {
             console.error('Error fetching token:', error);
         }
     };
-
-    // useEffect(() => {
-    //     fetchToken();
-    // }, []);
 
     useEffect(() => {
         if (token) {
             console.log("Connecting to Twilio...");
             const joinRoom = async () => {
                 try {
-                    const room = await Video.connect(token, {
+                    const connectedRoom = await Video.connect(token, {
                         name: roomName,
+                        tracks: localTracks,
                         video: true,
                         audio: true,
                     });
 
-                    setRoom(room);
+                    setRoom(connectedRoom);
 
-                    // Handle local participant's video track
-                    const localParticipant = room.localParticipant;
-                    localParticipant.videoTracks.forEach((publication) => {
-                        if (publication.track) {
-                            setLocalTrack(publication.track);
-                        }
-                    });
+                    // Handle local participant's tracks
+                    setLocalTracks([...connectedRoom.localParticipant.tracks.values()]);
 
                     // Handle remote participants
-                    room.on('participantConnected', (participant) => {
-                        participant.on('trackSubscribed', (track) => {
-                            if (track.kind === 'video') {
-                                setRemoteParticipants((prevParticipants) => [
-                                    ...prevParticipants,
-                                    { participant, track },
-                                ]);
-                            }
-                        });
+                    connectedRoom.participants.forEach(participant => {
+                        handleParticipantConnected(participant);
                     });
 
-                    // Handle participant disconnection
-                    room.on('participantDisconnected', (participant) => {
-                        setRemoteParticipants((prevParticipants) =>
-                            prevParticipants.filter((p) => p.participant !== participant)
-                        );
-                    });
+                    connectedRoom.on('participantConnected', handleParticipantConnected);
+                    connectedRoom.on('participantDisconnected', handleParticipantDisconnected);
                 } catch (error) {
                     console.error('Error connecting to room:', error);
                 }
@@ -75,12 +55,48 @@ const Chat = () => {
         }
     }, [token]);
 
+    const handleParticipantConnected = (participant) => {
+        console.log(`Participant connected: ${participant.identity}`);
+        participant.tracks.forEach(publication => {
+            if (publication.isSubscribed) {
+                handleTrackSubscribed(participant, publication.track);
+            }
+        });
+        participant.on('trackSubscribed', (track) => handleTrackSubscribed(participant, track));
+        participant.on('trackUnsubscribed', handleTrackUnsubscribed);
+    };
+
+    const handleParticipantDisconnected = (participant) => {
+        console.log(`Participant disconnected: ${participant.identity}`);
+        setRemoteParticipants(prevParticipants =>
+            prevParticipants.filter(p => p.participant !== participant)
+        );
+    };
+
+    const handleTrackSubscribed = (participant, track) => {
+        if (track.kind === 'video' || track.kind === 'audio') {
+            setRemoteParticipants(prevParticipants => [
+                ...prevParticipants,
+                { participant, track }
+            ]);
+        }
+    };
+
+    const handleTrackUnsubscribed = (track) => {
+        setRemoteParticipants(prevParticipants =>
+            prevParticipants.filter(p => p.track !== track)
+        );
+    };
+
     const handleLeaveRoom = () => {
         if (room) {
+            room.localParticipant.tracks.forEach((publication) => {
+                publication.track.stop();
+            });
             room.disconnect();
             setRoom(null);
             setRemoteParticipants([]);
-            setLocalTrack(null);
+            setLocalTracks([]);
         }
     };
 
@@ -90,36 +106,50 @@ const Chat = () => {
             <button onClick={fetchToken}>Start Video Call</button>
 
             <div id="local-video-container">
-                {localTrack && (
-                    <video
-                        ref={(video) => {
-                            if (video) {
-                                video.srcObject = new MediaStream([localTrack.mediaStreamTrack]); // Corrected
-                                video.play();
-                            }
-                        }}
-                        width="320"
-                        height="240"
-                        muted
-                    />
+                {localTracks.map((track, index) =>
+                    track.kind === 'video' ? (
+                        <video
+                            key={index}
+                            ref={(video) => {
+                                if (video) {
+                                    video.srcObject = new MediaStream([track.mediaStreamTrack]);
+                                    video.play();
+                                }
+                            }}
+                            width="320"
+                            height="240"
+                            muted
+                        />
+                    ) : null
                 )}
             </div>
 
             <div id="remote-video-container">
-                {remoteParticipants.map((remote, index) => (
-                    <div key={index}>
+                {remoteParticipants.map(({ participant, track }, index) =>
+                    track.kind === 'video' ? (
                         <video
+                            key={index}
                             ref={(video) => {
                                 if (video) {
-                                    video.srcObject = new MediaStream([remote.track.mediaStreamTrack]); // Corrected
+                                    video.srcObject = new MediaStream([track.mediaStreamTrack]);
                                     video.play();
                                 }
                             }}
                             width="320"
                             height="240"
                         />
-                    </div>
-                ))}
+                    ) : track.kind === 'audio' ? (
+                        <audio
+                            key={index}
+                            ref={(audio) => {
+                                if (audio) {
+                                    audio.srcObject = new MediaStream([track.mediaStreamTrack]);
+                                    audio.play();
+                                }
+                            }}
+                        />
+                    ) : null
+                )}
             </div>
 
             <button onClick={handleLeaveRoom}>Leave Room</button>
