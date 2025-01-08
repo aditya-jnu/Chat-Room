@@ -102,7 +102,7 @@ const Chat = () => {
 
     return (
         <div>
-            <h1>Twilio Video Call</h1>
+            <h1>Party Karyalay</h1>
             <button onClick={fetchToken} disabled={isConnected}>
                 Start Video Call
             </button>
