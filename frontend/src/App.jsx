@@ -1,11 +1,13 @@
-import './App.css'
+import InputBox from './components/InputBox'
 import Chat from './components/Chat'
-function App() {
+import { Route, Routes  } from 'react-router-dom'
 
+function App() {
   return (
-    <div>
-      <Chat/>
-    </div>
+    <Routes>
+      <Route path="/" element={<InputBox/>}/>
+      <Route path="/room/:code" element={<Chat />} />
+    </Routes>
   )
 }
 
